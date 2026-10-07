@@ -5,6 +5,8 @@ def summarize_funnel(counts):
     out = []
     prev = None
     for step, value in counts:
+        if value < 0:
+            raise ValueError("funnel counts cannot be negative")
         out.append({
             "step": step,
             "users": value,
