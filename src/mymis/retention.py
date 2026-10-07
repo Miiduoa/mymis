@@ -1,15 +1,16 @@
 from collections import defaultdict
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timedelta
+from zoneinfo import ZoneInfo
 
 
-def _parse_timestamp(value):
+def _parse_timestamp(value, reporting_zone):
     if isinstance(value, datetime):
         dt = value
     else:
         dt = datetime.fromisoformat(str(value).replace("Z", "+00:00"))
     if dt.tzinfo is None:
         raise ValueError("event timestamp must include timezone")
-    return dt.astimezone(timezone.utc)
+    return dt.astimezone(reporting_zone)
 
 
 def _week_start(dt):
@@ -17,15 +18,17 @@ def _week_start(dt):
     return day - timedelta(days=day.weekday())
 
 
-def weekly_retention(events, signup_event="signup", activity_events=None, max_week=4):
-    """Build calendar-week retention from user-level event rows.
-
-    Week 0 is the user's signup cohort week. Users are counted at most once per
-    cohort/week pair. Events before signup are ignored.
-    """
+def weekly_retention(
+    events,
+    signup_event="signup",
+    activity_events=None,
+    max_week=4,
+    reporting_timezone="UTC",
+):
     if max_week < 0:
         raise ValueError("max_week cannot be negative")
 
+    reporting_zone = ZoneInfo(reporting_timezone)
     parsed = []
     for row in events:
         user_id = row.get("user_id")
@@ -33,13 +36,11 @@ def weekly_retention(events, signup_event="signup", activity_events=None, max_we
         timestamp = row.get("timestamp")
         if not user_id or not name or not timestamp:
             raise ValueError("events require user_id, event_name and timestamp")
-        parsed.append((str(user_id), str(name), _parse_timestamp(timestamp)))
+        parsed.append((str(user_id), str(name), _parse_timestamp(timestamp, reporting_zone)))
 
     first_signup = {}
     for user_id, name, ts in parsed:
-        if name != signup_event:
-            continue
-        if user_id not in first_signup or ts < first_signup[user_id]:
+        if name == signup_event and (user_id not in first_signup or ts < first_signup[user_id]):
             first_signup[user_id] = ts
 
     active_filter = None if activity_events is None else set(activity_events)
@@ -64,14 +65,14 @@ def weekly_retention(events, signup_event="signup", activity_events=None, max_we
 
     rows = []
     for cohort in sorted(cohort_users):
-        size = len(cohort_users[cohort])
+        cohort_size = len(cohort_users[cohort])
         for week in range(max_week + 1):
             users = len(active[(cohort, week)])
             rows.append({
                 "cohort": cohort.isoformat(),
                 "week": week,
                 "users": users,
-                "cohort_size": size,
-                "retention": users / size if size else 0,
+                "cohort_size": cohort_size,
+                "retention": users / cohort_size if cohort_size else 0,
             })
     return rows
